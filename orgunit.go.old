@@ -1,0 +1,50 @@
+package ad
+
+import "strings"
+
+// OrgUnit is a storage mechanism for the basic ldapDisplayName Properties.
+type OrgUnit struct {
+	City                            string
+	Country                         string
+	Description                     string
+	distinguishedName               string
+	DisplayName                     string
+	PostalCode                      string
+	ProtectedFromAccidentalDeletion bool
+	State                           string
+	StreetAddress                   string
+	Name                            string
+}
+
+func (o *OrgUnit) DistinguishedName() string {
+	return o.distinguishedName
+}
+
+// IsRoot returns true if there are no other parent OrgUnit's
+func (o OrgUnit) IsRoot() bool {
+	if reDC.MatchString(o.distinguishedName) {
+		return true
+	}
+	return false
+}
+
+// Parent returns the parent OrgUnit
+func (o *OrgUnit) Parent() OrgUnit {
+	pieces := strings.Split(o.distinguishedName, ",")
+	return OrgUnit{
+		Name:              pieces[0],
+		distinguishedName: strings.Join(pieces[1:], ","),
+	}
+}
+
+func OrgUnitFromDistinguishedName(dn string) OrgUnit {
+
+	cn, _ := ParseDistinguishedName(dn)
+
+	OU := OrgUnit{
+		distinguishedName: dn,
+		Name:              cn,
+	}
+
+	return OU
+}

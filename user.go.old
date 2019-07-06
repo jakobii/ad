@@ -1,0 +1,518 @@
+package ad
+
+import (
+	"encoding/json"
+	"errors"
+	"regexp"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jakobii/ps"
+)
+
+// User is a storage mechanism for the basic ldapDisplayName Properties.
+type User struct {
+
+	// identity with unique constraint
+	objectGuid        uuid.UUID
+	distinguishedName string
+	SamAccountName    string
+	Name              string
+
+	// identity without unique constraint
+	EmployeeID        string
+	EmployeeNumber    string
+	EmailAddress      string
+	UserPrincipalName string
+
+	// security
+	AccountExpirationDate time.Time
+	//OrganizationalUnit    OrgUnit
+	Enabled     bool
+	memberOf    []string
+	objectClass string
+
+	// password
+	AccountPassword       string
+	CannotChangePassword  bool
+	ChangePasswordAtLogon bool
+	PasswordNeverExpires  bool
+	PasswordNotRequired   bool
+
+	// name
+	DisplayName string
+	GivenName   string
+	Surname     string
+	OtherName   string
+	Initials    string
+
+	// position
+	Title        string
+	Division     string
+	Department   string
+	Office       string
+	Company      string
+	Organization string
+	HomePage     string
+	Description  string
+
+	// phone
+	OfficePhone string
+	MobilePhone string
+	HomePhone   string
+	Fax         string
+
+	// mail
+	POBox         string
+	StreetAddress string
+	City          string
+	State         string
+	PostalCode    string
+	Country       string
+}
+
+func (u *User) ObjectGuid() uuid.UUID {
+	return u.objectGuid
+}
+
+// DistinguishedName is a getter func for the unexported distinguishedName field.
+func (u *User) DistinguishedName() string {
+	return u.distinguishedName
+}
+
+// ObjectClass is a getter func for the unexported objectClass field.
+func (u *User) ObjectClass() string {
+	return u.objectClass
+}
+
+// Identity returns an aduser identity with the following precedence: ObjectGuid, DistinguishedName, Name, SamAccountName
+// returns empty string if no identity can be found.
+func (u *User) Identity() (id string, err error) {
+	guid := u.objectGuid.String()
+	if guid != "00000000-0000-0000-0000-000000000000" {
+
+		return guid, nil
+
+	} else if u.distinguishedName != "" {
+
+		return u.distinguishedName, nil
+
+	} else if u.Name != "" {
+
+		return u.Name, nil
+
+	} else if u.SamAccountName != "" {
+
+		return u.SamAccountName, nil
+
+	}
+
+	return "", errors.New("all identity properties are blank")
+}
+
+func (u *User) MemberOf() []Group {
+	groups := make([]Group, 0, len(u.memberOf))
+	for _, v := range u.memberOf {
+		groups = append(groups, GroupFromDistinguishedName(v))
+	}
+	return groups
+}
+
+func (u *User) OrganizationalUnit() OrgUnit {
+	_, ou := ParseDistinguishedName(u.distinguishedName)
+	return OrgUnitFromDistinguishedName(ou)
+}
+
+// Pull will update the ADUser struct.
+func (u *User) Pull(Server string, Cred Credential) (err error) {
+
+	var identity string
+	identity, err = u.Identity()
+	if err != nil {
+		return err
+	}
+	nu, err := GetUser(Server, Cred, identity)
+	if err != nil {
+		return err
+	}
+	*u = nu
+
+	return nil
+}
+
+// Push will update active directory. if the aduser goes net yet exist it will be created.
+func (u *User) Push(Server string, Cred Credential) (err error) {
+
+	if u.Name == "" {
+		return errors.New("Push failed because Name field is blank")
+	}
+
+	identity, err := u.Identity()
+	if err != nil {
+		return err
+	}
+
+	// create if not exists
+	if !testADUser(Server, Cred, identity) {
+		nu, err := newADUser(Server, Cred, u.Name)
+		if err != nil {
+			return err
+		}
+		*u = nu
+		//deepCopyUsers(u, &nu)
+	}
+
+	//
+	err = setADUser(Server, Cred, identity, u.AccountExpirationDate, u.AccountPassword, u.CannotChangePassword, u.ChangePasswordAtLogon, u.City, u.Company, u.Country, u.Department, u.Description, u.DisplayName, u.Division, u.EmailAddress, u.EmployeeID, u.EmployeeNumber, u.Enabled, u.Fax, u.GivenName, u.HomePage, u.HomePhone, u.Initials, u.MobilePhone, u.Name, u.Office, u.OfficePhone, u.Organization, u.OtherName, u.PasswordNeverExpires, u.PasswordNotRequired, u.POBox, u.PostalCode, u.SamAccountName, u.State, u.StreetAddress, u.Surname, u.Title, u.UserPrincipalName)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// GET ADUSER
+const psGetADUser string = `
+function ConvertTo-ADUserJson {
+    param(
+        [parameter(ValueFromPipeline)]
+        $ADUser
+    )
+
+    return @{
+		ObjectClass           = $ADUser.ObjectClass
+        ObjectGuid            = $ADUser.ObjectGuid        
+        DistinguishedName     = $ADUser.distinguishedName 
+        SamAccountName        = $ADUser.SamAccountName    
+        Name                  = $ADUser.Name              
+        EmployeeID            = $ADUser.EmployeeID        
+        EmployeeNumber        = $ADUser.EmployeeNumber    
+        EmailAddress          = $ADUser.EmailAddress      
+        UserPrincipalName     = $ADUser.UserPrincipalName 
+        AccountExpirationDate = $ADUser.AccountExpirationDate  
+        Enabled               = $ADUser.Enabled                           
+        MemberOf              = $ADUser.memberOf              
+        #AccountPassword       = $ADUser.AccountPassword # returns array      
+        CannotChangePassword  = $ADUser.CannotChangePassword  
+        #ChangePasswordAtLogon = $ADUser.ChangePasswordAtLogon # returns array
+        PasswordNeverExpires  = $ADUser.PasswordNeverExpires  
+        PasswordNotRequired   = $ADUser.PasswordNotRequired   
+        DisplayName           = $ADUser.DisplayName 
+        GivenName             = $ADUser.GivenName   
+        Surname               = $ADUser.Surname     
+        OtherName             = $ADUser.OtherName   
+        Initials              = $ADUser.Initials    
+        Title                 = $ADUser.Title        
+        Division              = $ADUser.Division     
+        Department            = $ADUser.Department   
+        Office                = $ADUser.Office       
+        Company               = $ADUser.Company      
+        Organization          = $ADUser.Organization 
+        HomePage              = $ADUser.HomePage     
+        Description           = $ADUser.Description  
+        OfficePhone           = $ADUser.OfficePhone 
+        MobilePhone           = $ADUser.MobilePhone 
+        HomePhone             = $ADUser.HomePhone   
+        Fax                   = $ADUser.Fax         
+        POBox                 = $ADUser.POBox         
+        StreetAddress         = $ADUser.StreetAddress 
+        City                  = $ADUser.City          
+        State                 = $ADUser.State         
+        PostalCode            = $ADUser.PostalCode    
+        Country               = $ADUser.Country       
+    } | ConvertTo-Json
+}
+
+Get-ADUser -Identity $Identity -Properties * -Server $Server -Credential $Credential | ConvertTo-ADUserJson
+`
+
+func GetUser(Server string, Cred Credential, Identity string) (user User, err error) {
+
+	var scriptblock = psGetADUser
+	scriptblock = strings.Replace(scriptblock, "$Server", ps.QuoteString(Server), 1)
+	scriptblock = strings.Replace(scriptblock, "$Credential", Cred.Expr(), 1)
+	scriptblock = strings.Replace(scriptblock, "$Identity", ps.QuoteString(Identity), 1)
+
+	//fmt.Println("\r\n", scriptblock, "\r\n")
+
+	result, err := ps.Invoke(scriptblock)
+
+	// check if the identity was not found
+	if err != nil {
+		regADUserNotFound := regexp.MustCompile(`^.*Cannot find an object with identity.*$`)
+		if regADUserNotFound.Match([]byte(err.Error())) {
+			return user, errors.New("the identity '" + Identity + "' was not found on server '" + Server + "'")
+		}
+	}
+
+	// standard error
+	if err != nil {
+		return user, err
+	}
+
+	err = json.Unmarshal(result, &user)
+	if err != nil {
+		return user, err
+	}
+
+	//memberof
+	m := struct {
+		ObjectGuid        uuid.UUID
+		MemberOf          []string
+		ObjectClass       string
+		DistinguishedName string
+	}{}
+	err = json.Unmarshal(result, &m)
+	if err != nil {
+		return user, err
+	}
+	user.memberOf = m.MemberOf
+	user.objectClass = m.ObjectClass
+	user.objectGuid = m.ObjectGuid
+	user.distinguishedName = m.DistinguishedName
+
+	if user.ObjectClass() != "user" {
+		errMsg := "Identity has an ObjectClass of '" + user.ObjectClass() + "' not ObjectClass 'user'"
+		return user, errors.New(errMsg)
+	}
+
+	return user, nil
+}
+
+// TEST ADUSER
+const psTestADUser string = `try{Get-ADUser -Identity $Identity -Server $Server -Credential $Credential -ErrorAction 'stop'; return 'TRUE'}catch{return 'FALSE'}`
+
+func testADUser(Server string, Cred Credential, Identity string) bool {
+	var scriptblock = psTestADUser
+	scriptblock = strings.Replace(scriptblock, "$Server", ps.QuoteString(Server), 1)
+	scriptblock = strings.Replace(scriptblock, "$Credential", Cred.Expr(), 1)
+	scriptblock = strings.Replace(scriptblock, "$Identity", ps.QuoteString(Identity), 1)
+
+	result, err := ps.Invoke(scriptblock)
+	if err != nil {
+		return false
+	}
+	if string(result) == "TRUE" {
+		return true
+	} else if string(result) == "FALSE" {
+		return false
+	}
+	return false
+}
+
+// NEW ADUSER
+// "new-aduser -passthru" is broken, thus the seperate get cmdlet.
+const psNewADUser string = `New-ADUser -Name $Name -Server $Server -Credential $Credential | Out-Null;`
+
+func newADUser(Server string, Cred Credential, Name string) (user User, err error) {
+
+	if Name == "" {
+		return user, errors.New("User creation failed becuase the Name is blank")
+	}
+
+	var scriptblock string
+	scriptblock = strings.Replace(psNewADUser, "$Server", ps.QuoteString(Server), 1)
+	scriptblock = strings.Replace(psNewADUser, "$Credential", Cred.Expr(), 1)
+	scriptblock = strings.Replace(psNewADUser, "$Name", ps.QuoteString(Name), 1)
+
+	_, err = ps.Invoke(scriptblock)
+	if err != nil {
+		return user, err
+	}
+
+	user, err = GetUser(Server, Cred, Name)
+	if err != nil {
+		return user, err
+	}
+
+	return user, nil
+}
+
+// SET ADUSER
+const psSetADUser string = `Set-ADUser -Identity $Identity -Server $Server -Credential $Credential -CannotChangePassword $CannotChangePassword -ChangePasswordAtLogon $ChangePasswordAtLogon -Company $Company -Country $Country -Department $Department -Description $Description -DisplayName $DisplayName -Division $Division -EmailAddress $EmailAddress -EmployeeID $EmployeeID -EmployeeNumber $EmployeeNumber -Enabled $Enabled -Fax $Fax -GivenName $GivenName -HomePage $HomePage -HomePhone $HomePhone -Initials $Initials -MobilePhone $MobilePhone -Office $Office -OfficePhone $OfficePhone -Organization $Organization -OtherName $OtherName -PasswordNeverExpires $PasswordNeverExpires -PasswordNotRequired $PasswordNotRequired -POBox $POBox -PostalCode $PostalCode -SamAccountName $SamAccountName -State $State -StreetAddress $StreetAddress -Surname $Surname -Title $Title -UserPrincipalName $UserPrincipalName | Out-Null`
+
+func setADUser(Server string, Cred Credential, Identity string, AccountExpirationDate time.Time, AccountPassword string, CannotChangePassword bool, ChangePasswordAtLogon bool, City string, Company string, Country string, Department string, Description string, DisplayName string, Division string, EmailAddress string, EmployeeID string, EmployeeNumber string, Enabled bool, Fax string, GivenName string, HomePage string, HomePhone string, Initials string, MobilePhone string, Name string, Office string, OfficePhone string, Organization string, OtherName string, PasswordNeverExpires bool, PasswordNotRequired bool, POBox string, PostalCode string, SamAccountName string, State string, StreetAddress string, Surname string, Title string, UserPrincipalName string) (err error) {
+
+	if Name != "" {
+		err = renameADUser(Server, Cred, Identity, Name)
+		if err != nil {
+			return err
+		}
+	}
+
+	// expiration date
+	if AccountExpirationDate.IsZero() {
+		err = clearADAccountExpiration(Server, Cred, Identity)
+		if err != nil {
+			return err
+		}
+	} else {
+		err = setADAccountExpiration(Server, Cred, Identity, AccountExpirationDate)
+		if err != nil {
+			return err
+		}
+	}
+
+	// password
+	if AccountPassword != "" {
+		err = resetADUserPassord(Server, Cred, Identity, AccountPassword)
+		if err != nil {
+			return err
+		}
+	}
+
+	//set-aduser
+	var scriptblock = psSetADUser
+	scriptblock = strings.Replace(scriptblock, "$Server", ps.QuoteString(Server), 1)
+	scriptblock = strings.Replace(scriptblock, "$Credential", Cred.Expr(), 1)
+	scriptblock = strings.Replace(scriptblock, "$Identity", ps.QuoteString(Identity), 1)
+	scriptblock = strings.Replace(scriptblock, "$CannotChangePassword", ps.FormatBool(CannotChangePassword), 1)
+	scriptblock = strings.Replace(scriptblock, "$ChangePasswordAtLogon", ps.FormatBool(ChangePasswordAtLogon), 1)
+	scriptblock = strings.Replace(scriptblock, "$City", ps.QuoteString(City), 1)
+	scriptblock = strings.Replace(scriptblock, "$Company", ps.QuoteString(Company), 1)
+	scriptblock = strings.Replace(scriptblock, "$Country", ps.QuoteString(Country), 1)
+	scriptblock = strings.Replace(scriptblock, "$Department", ps.QuoteString(Department), 1)
+	scriptblock = strings.Replace(scriptblock, "$Description", ps.QuoteString(Description), 1)
+	scriptblock = strings.Replace(scriptblock, "$DisplayName", ps.QuoteString(DisplayName), 1)
+	scriptblock = strings.Replace(scriptblock, "$Division", ps.QuoteString(Division), 1)
+	scriptblock = strings.Replace(scriptblock, "$EmailAddress", ps.QuoteString(EmailAddress), 1)
+	scriptblock = strings.Replace(scriptblock, "$EmployeeID", ps.QuoteString(EmployeeID), 1)
+	scriptblock = strings.Replace(scriptblock, "$EmployeeNumber", ps.QuoteString(EmployeeNumber), 1)
+	scriptblock = strings.Replace(scriptblock, "$Enabled", ps.FormatBool(Enabled), 1)
+	scriptblock = strings.Replace(scriptblock, "$Fax", ps.QuoteString(Fax), 1)
+	scriptblock = strings.Replace(scriptblock, "$GivenName", ps.QuoteString(GivenName), 1)
+	scriptblock = strings.Replace(scriptblock, "$HomePage", ps.QuoteString(HomePage), 1)
+	scriptblock = strings.Replace(scriptblock, "$HomePhone", ps.QuoteString(HomePhone), 1)
+	scriptblock = strings.Replace(scriptblock, "$Initials", ps.QuoteString(Initials), 1)
+	scriptblock = strings.Replace(scriptblock, "$MobilePhone", ps.QuoteString(MobilePhone), 1)
+	scriptblock = strings.Replace(scriptblock, "$Office", ps.QuoteString(Office), 1)
+	scriptblock = strings.Replace(scriptblock, "$OfficePhone", ps.QuoteString(OfficePhone), 1)
+	scriptblock = strings.Replace(scriptblock, "$Organization", ps.QuoteString(Organization), 1)
+	scriptblock = strings.Replace(scriptblock, "$OtherName", ps.QuoteString(OtherName), 1)
+	scriptblock = strings.Replace(scriptblock, "$PasswordNeverExpires", ps.FormatBool(PasswordNeverExpires), 1)
+	scriptblock = strings.Replace(scriptblock, "$PasswordNotRequired", ps.FormatBool(PasswordNotRequired), 1)
+	scriptblock = strings.Replace(scriptblock, "$POBox", ps.QuoteString(POBox), 1)
+	scriptblock = strings.Replace(scriptblock, "$PostalCode", ps.QuoteString(PostalCode), 1)
+	scriptblock = strings.Replace(scriptblock, "$PostalCode", ps.QuoteString(PostalCode), 1)
+	scriptblock = strings.Replace(scriptblock, "$SamAccountName", ps.QuoteString(SamAccountName), 1)
+	scriptblock = strings.Replace(scriptblock, "$State", ps.QuoteString(State), 1)
+	scriptblock = strings.Replace(scriptblock, "$StreetAddress", ps.QuoteString(StreetAddress), 1)
+	scriptblock = strings.Replace(scriptblock, "$Surname", ps.QuoteString(Surname), 1)
+	scriptblock = strings.Replace(scriptblock, "$Title", ps.QuoteString(Title), 1)
+	scriptblock = strings.Replace(scriptblock, "$UserPrincipalName", ps.QuoteString(UserPrincipalName), 1)
+	_, err = ps.Invoke(scriptblock)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+const psClearADAccountExpiration string = `Clear-ADAccountExpiration -Identity $Identity -Server $Server -Credential $Credential`
+
+func clearADAccountExpiration(Server string, Cred Credential, Identity string) (err error) {
+	var scriptblock = psClearADAccountExpiration
+	scriptblock = strings.Replace(scriptblock, "$Server", ps.QuoteString(Server), 1)
+	scriptblock = strings.Replace(scriptblock, "$Credential", Cred.Expr(), 1)
+	scriptblock = strings.Replace(scriptblock, "$Identity", ps.QuoteString(Identity), 1)
+
+	_, err = ps.Invoke(scriptblock)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+const psSetADAccountExpiration string = `Set-ADAccountExpiration -Identity $Identity -Server $Server -Credential $Credential -DateTime $DateTime`
+
+func setADAccountExpiration(Server string, Cred Credential, Identity string, DateTime time.Time) (err error) {
+	var scriptblock = psSetADAccountExpiration
+	scriptblock = strings.Replace(scriptblock, "$Server", ps.QuoteString(Server), 1)
+	scriptblock = strings.Replace(scriptblock, "$Credential", Cred.Expr(), 1)
+	scriptblock = strings.Replace(scriptblock, "$Identity", ps.QuoteString(Identity), 1)
+	scriptblock = strings.Replace(scriptblock, "$DateTime", ps.QuoteTime(DateTime), 1)
+
+	_, err = ps.Invoke(scriptblock)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+const psRenameADUser string = `Get-ADUser -Identity $Identity -Server $Server -Credential $Credential | Rename-ADObject -NewName $NewName -Server $Server -Credential $Credential | Out-Null`
+
+func renameADUser(Server string, Cred Credential, Identity string, NewName string) (err error) {
+
+	var scriptblock = psRenameADUser
+	scriptblock = strings.Replace(scriptblock, "$Server", ps.QuoteString(Server), 2)
+	scriptblock = strings.Replace(scriptblock, "$Credential", Cred.Expr(), 2)
+	scriptblock = strings.Replace(scriptblock, "$Identity", ps.QuoteString(Identity), 1)
+	scriptblock = strings.Replace(scriptblock, "$NewName", ps.QuoteString(NewName), 2)
+
+	_, err = ps.Invoke(scriptblock)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+const psResetADUserPassord string = "Set-ADAccountPassword -Identity $Identity -NewPassword $(ConvertTo-SecureString  -String $NewPassword -AsPlainText -Force) -Reset -Confirm:$false -Server $Server -Credential $Credential | out-null"
+
+func resetADUserPassord(Server string, Cred Credential, Identity string, NewPassword string) (err error) {
+
+	var scriptblock = psRenameADUser
+	scriptblock = strings.Replace(scriptblock, "$Server", ps.QuoteString(Server), 1)
+	scriptblock = strings.Replace(scriptblock, "$Credential", Cred.Expr(), 1)
+	scriptblock = strings.Replace(scriptblock, "$Identity", ps.QuoteString(Identity), 1)
+	scriptblock = strings.Replace(scriptblock, "$NewPassword", ps.QuoteString(NewPassword), 1)
+
+	_, err = ps.Invoke(scriptblock)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func deepCopyUsers(d *User, s *User) {
+	d.objectGuid = s.objectGuid
+	d.distinguishedName = s.distinguishedName
+	d.SamAccountName = s.SamAccountName
+	d.Name = s.Name
+	d.EmployeeID = s.EmployeeID
+	d.EmployeeNumber = s.EmployeeNumber
+	d.EmailAddress = s.EmailAddress
+	d.UserPrincipalName = s.UserPrincipalName
+	d.AccountExpirationDate = s.AccountExpirationDate
+	d.Enabled = s.Enabled
+	d.memberOf = s.memberOf
+	d.objectClass = s.objectClass
+	d.AccountPassword = s.AccountPassword
+	d.CannotChangePassword = s.CannotChangePassword
+	d.ChangePasswordAtLogon = s.ChangePasswordAtLogon
+	d.PasswordNeverExpires = s.PasswordNeverExpires
+	d.PasswordNotRequired = s.PasswordNotRequired
+	d.DisplayName = s.DisplayName
+	d.GivenName = s.GivenName
+	d.Surname = s.Surname
+	d.OtherName = s.OtherName
+	d.Initials = s.Initials
+	d.Title = s.Title
+	d.Division = s.Division
+	d.Department = s.Department
+	d.Office = s.Office
+	d.Company = s.Company
+	d.Organization = s.Organization
+	d.HomePage = s.HomePage
+	d.Description = s.Description
+	d.OfficePhone = s.OfficePhone
+	d.MobilePhone = s.MobilePhone
+	d.HomePhone = s.HomePhone
+	d.Fax = s.Fax
+	d.POBox = s.POBox
+	d.StreetAddress = s.StreetAddress
+	d.City = s.City
+	d.State = s.State
+	d.PostalCode = s.PostalCode
+	d.Country = s.Country
+}

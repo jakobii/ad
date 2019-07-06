@@ -1,0 +1,140 @@
+package ad
+
+import (
+	"encoding/json"
+	"errors"
+	"strings"
+
+	"github.com/google/uuid"
+	"github.com/jakobii/ps"
+)
+
+// Group is a storage mechanism for the basic ldapDisplayName Properties.
+type Group struct {
+	objectGuid         uuid.UUID
+	SamAccountName     string
+	Name               string
+	distinguishedName  string
+	DisplayName        string
+	Description        string
+	GroupCategory      string
+	ObjectClass        string
+	OrganizationalUnit OrgUnit
+	memberOf           []string
+	members            []string
+}
+
+func (g *Group) ObjectGuid() uuid.UUID {
+	return g.objectGuid
+}
+
+func (g *Group) DistinguishedName() string {
+	return g.distinguishedName
+}
+
+func (g *Group) MemberOf() []Group {
+	groups := make([]Group, 0, len(g.memberOf))
+	for _, v := range g.memberOf {
+		groups = append(groups, GroupFromDistinguishedName(v))
+	}
+	return groups
+}
+
+func (g *Group) UserMembers() []string {
+	return g.members
+}
+
+func (g *Group) GroupMembers() []string {
+	return g.members
+}
+
+// Identity returns an aduser identity with the following precedence: ObjectGuid, DistinguishedName, Name, SamAccountName
+// returns empty string if no identity can be found.
+func (g *Group) Identity() (id string, err error) {
+
+	guid := g.objectGuid.String()
+
+	if guid != "00000000-0000-0000-0000-000000000000" {
+
+		return guid, nil
+
+	} else if g.distinguishedName != "" {
+
+		return g.distinguishedName, nil
+
+	} else if g.Name != "" {
+
+		return g.Name, nil
+
+	} else if g.SamAccountName != "" {
+
+		return g.SamAccountName, nil
+	}
+
+	return "", errors.New("all identity properties are blank")
+}
+
+// Pull updates the current object with data from Active Directory.
+func (g *Group) Pull(Server string, Cred Credential) (err error) {
+
+	identity, err := g.Identity()
+	if err != nil {
+		return err
+	}
+	ng, err := GetGroup(Server, Cred, identity)
+	if err != nil {
+		return err
+	}
+	*g = ng
+
+	//deepCopyUsers(u, &nu)
+	return nil
+}
+
+func GroupFromDistinguishedName(dn string) Group {
+	cn, ou := ParseDistinguishedName(dn)
+	return Group{
+		distinguishedName:  dn,
+		Name:               cn,
+		OrganizationalUnit: OrgUnitFromDistinguishedName(ou),
+	}
+}
+
+func GroupFromObjectGuid(g uuid.UUID) Group {
+	return Group{objectGuid: g}
+}
+
+const psGetADGoup string = `Get-ADGroup -Identity $Identity -Properties * -ErrorAction 'stop' -Server $Server -Credential $Credential | ConvertTo-Json`
+
+func GetGroup(Server string, Cred Credential, Identity string) (group Group, err error) {
+
+	var scriptblock string
+	scriptblock = strings.Replace(psGetADGoup, "$Server", ps.QuoteString(Server), 1)
+	scriptblock = strings.Replace(psGetADGoup, "$Credential", Cred.Expr(), 1)
+	scriptblock = strings.Replace(psGetADGoup, "$Identity", ps.QuoteString(Identity), 1)
+
+	var result []byte
+	result, err = ps.Invoke(scriptblock)
+	if err != nil {
+		return group, err
+	}
+
+	err = json.Unmarshal(result, &group)
+	if err != nil {
+		return group, err
+	}
+
+	// unexported stuff.
+	other := struct {
+		ObjectGuid        uuid.UUID
+		DistinguishedName string
+	}{}
+	err = json.Unmarshal(result, &other)
+	if err != nil {
+		return group, err
+	}
+	group.objectGuid = other.ObjectGuid
+	group.distinguishedName = other.DistinguishedName
+
+	return group, nil
+}

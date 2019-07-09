@@ -40,7 +40,9 @@ func (o *Object) Pull() error {
 	if err != nil {
 		return err
 	}
-	o.DistinguishedName = obj.DistinguishedName
 	o.Name = obj.Name
+	o.ObjectClass = obj.ObjectClass
+	o.ObjectGuid = obj.ObjectGuid
+	o.DistinguishedName = obj.DistinguishedName
 	return nil
 }

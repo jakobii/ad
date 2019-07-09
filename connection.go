@@ -3,6 +3,9 @@ package ad
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"regexp"
+	"strings"
 
 	"github.com/jakobii/ps"
 )
@@ -32,7 +35,7 @@ func (c *Connection) Test() bool {
 	cmd.WriteString(" -Identity ")
 	cmd.WriteString(ps.QuoteString(c.Credential.UserName))
 
-	_, err := ps.Invoke(cmd.String())
+	_, err := powershell(cmd.String())
 	if err != nil {
 		return false
 	}
@@ -50,7 +53,7 @@ func (c *Connection) GetObject(Identity string) (obj Object, err error) {
 	cmd.WriteString(ps.QuoteString(Identity))
 	cmd.WriteString(" | Select-Object @('ObjectGuid', 'ObjectClass',  'DistinguishedName', 'Name') | ConvertTo-Json")
 
-	result, err := ps.Invoke(cmd.String())
+	result, err := powershell(cmd.String())
 	if err != nil {
 		return obj, err
 	}
@@ -59,6 +62,8 @@ func (c *Connection) GetObject(Identity string) (obj Object, err error) {
 	if err != nil {
 		return obj, err
 	}
+
+	obj.Connection = *c
 
 	return obj, nil
 }
@@ -77,7 +82,7 @@ func (c *Connection) GetUser(Identity string) (user User, err error) {
 
 	//fmt.Println(cmd.String())
 
-	result, err := ps.Invoke(cmd.String())
+	result, err := powershell(cmd.String())
 	if err != nil {
 		return user, err
 	}
@@ -124,6 +129,52 @@ func (c *Connection) GetUser(Identity string) (user User, err error) {
 	return user, nil
 }
 
+// TestADUser returns true if a match is found, and return false if no match is found.
+func (c *Connection) TestADUser(LdapDisplayName string, Value string) (bool, error) {
+	var cmd bytes.Buffer
+	cmd.WriteString("Get-ADUser -Server ")
+	cmd.WriteString(ps.QuoteString(c.Server))
+	cmd.WriteString(" -Credential ")
+	cmd.WriteString(c.Credential.Expr())
+	cmd.WriteString(" -Filter ")
+	cmd.WriteString("\"" + LdapDisplayName + " -eq '" + ps.EscapeSingleQuoteString(Value) + "'\"")
+
+	//fmt.Println(cmd.String())
+
+	result, err := powershell(cmd.String())
+	if err != nil {
+		return false, err
+	}
+
+	if len(result) > 0 {
+		return true, nil
+	}
+	return false, nil
+}
+
+// NewUser creates a new user in Active Directory
+func (c *Connection) NewUser(Name string) error {
+
+	if strings.TrimSpace(Name) == "" {
+		return errors.New("Name can not be blank")
+	}
+
+	var cmd bytes.Buffer
+	cmd.WriteString("New-ADUser -Server ")
+	cmd.WriteString(ps.QuoteString(c.Server))
+	cmd.WriteString(" -Credential ")
+	cmd.WriteString(c.Credential.Expr())
+	cmd.WriteString(" -Name ")
+	cmd.WriteString(ps.QuoteString(Name))
+
+	_, err := powershell(cmd.String())
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// GetOrgUnit finds and returns OrgUnits in Active Directory
 func (c *Connection) GetOrgUnit(Identity string) (ou OrgUnit, err error) {
 
 	// get the main stuff
@@ -138,9 +189,22 @@ func (c *Connection) GetOrgUnit(Identity string) (ou OrgUnit, err error) {
 
 	//fmt.Println(cmd.String())
 
-	result, err := ps.Invoke(cmd.String())
+	result, err := powershell(cmd.String())
 	if err != nil {
-		return ou, err
+		//return ou, err
+
+		re, err2 := regexp.Compile(".*Cannot find an object with identity.*")
+		if err2 != nil {
+			return ou, err2
+		}
+		if re.MatchString(err.Error()) {
+			obj, err2 := c.GetObject(Identity)
+			if err2 != nil {
+				return ou, err
+			}
+			ou.Object = obj
+			return ou, nil
+		}
 	}
 
 	// Object
@@ -148,6 +212,8 @@ func (c *Connection) GetOrgUnit(Identity string) (ou OrgUnit, err error) {
 	if err != nil {
 		return ou, err
 	}
+
+	ou.Connection = *c
 
 	// OrgUnit
 	err = json.Unmarshal(result, &ou)
@@ -172,7 +238,7 @@ func (c *Connection) GetGroup(Identity string) (group Group, err error) {
 
 	//fmt.Println(cmd.String())
 
-	result, err := ps.Invoke(cmd.String())
+	result, err := powershell(cmd.String())
 	if err != nil {
 		return group, err
 	}
@@ -182,6 +248,8 @@ func (c *Connection) GetGroup(Identity string) (group Group, err error) {
 	if err != nil {
 		return group, err
 	}
+
+	group.Connection = *c
 
 	// Group
 	err = json.Unmarshal(result, &group)

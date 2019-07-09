@@ -103,7 +103,45 @@ func (u *User) Pull() error {
 	return nil
 }
 
-func (u *User) Push() error {
+func (u *User) Push() (err error) {
+
+	// error checking
+	//if strings.TrimSpace(u.SamAccountName) == "" {
+	//	return errors.New("SamAccountName can not be blank")
+	//}
+	if strings.TrimSpace(u.Name) == "" {
+		return errors.New("Name can not be blank")
+	}
+
+	// check if the user object has an object guid
+	// not having an object guid is an indication that the
+	// user does not yet exist in active directory
+	// attempt to create it.
+	if u.ObjectGuid.String() == "00000000-0000-0000-0000-000000000000" {
+		NameExists, err := u.TestName()
+		if err != nil {
+			return err
+		}
+		if NameExists {
+			user, err := u.GetUser(u.Name)
+			if err != nil {
+				return err
+			}
+			u.Object = user.Object
+		} else {
+			err = u.NewUser(u.Name)
+			if err != nil {
+				return err
+			}
+			user, err := u.GetUser(u.Name)
+			if err != nil {
+				return err
+			}
+			u.Object = user.Object
+		}
+	}
+
+	// update process
 	id, err := u.Identity()
 	if err != nil {
 		return err
@@ -111,11 +149,16 @@ func (u *User) Push() error {
 
 	// password
 	if strings.TrimSpace(u.AccountPassword) != "" {
-		u.SetPassword(u.AccountPassword)
+		err = u.SetPassword()
+		if err != nil {
+			return err
+		}
 	}
 
 	// expiration
 	u.SetExpiration(u.AccountExpirationDate)
+
+	// OrgUnit
 
 	// leave groups
 	var exists bool
@@ -133,6 +176,7 @@ func (u *User) Push() error {
 			}
 			if vid == zid {
 				exists = true
+				break
 			}
 		}
 		if !exists {
@@ -159,6 +203,7 @@ func (u *User) Push() error {
 			}
 			if vid == zid {
 				exists = true
+				break
 			}
 		}
 		if !exists {
@@ -180,24 +225,35 @@ func (u *User) Push() error {
 	cmd.WriteString(ps.QuoteString(id))
 	cmd.WriteString(" -Confirm:$false")
 
+	//cmd.WriteString(ps.Param("SamAccountName", ps.QuoteString(u.SamAccountName)))
 	if u.SamAccountName == "" {
-		return errors.New("SamAccountName can not be blank")
+		cmd.WriteString(ps.Param("SamAccountName", "$null"))
+	} else {
+		cmd.WriteString(ps.Param("SamAccountName", ps.QuoteString(u.SamAccountName)))
+	}
+	if u.EmployeeID == "" {
+		cmd.WriteString(ps.Param("EmployeeID", "$null"))
+	} else {
+		cmd.WriteString(ps.Param("EmployeeID", ps.QuoteString(u.EmployeeID)))
 	}
 
-	cmd.WriteString(" -SamAccountName ")
-	cmd.WriteString(ps.QuoteString(u.SamAccountName))
+	if u.EmployeeNumber == "" {
+		cmd.WriteString(ps.Param("EmployeeNumber", "$null"))
+	} else {
+		cmd.WriteString(ps.Param("EmployeeNumber", ps.QuoteString(u.EmployeeNumber)))
+	}
 
-	cmd.WriteString(" -EmployeeID ")
-	cmd.WriteString(ps.QuoteString(u.EmployeeID))
+	if u.EmailAddress == "" {
+		cmd.WriteString(ps.Param("EmailAddress", "$null"))
+	} else {
+		cmd.WriteString(ps.Param("EmailAddress", ps.QuoteString(u.EmailAddress)))
+	}
 
-	cmd.WriteString(" -EmployeeNumber ")
-	cmd.WriteString(ps.QuoteString(u.EmployeeNumber))
-
-	cmd.WriteString(" -EmailAddress ")
-	cmd.WriteString(ps.QuoteString(u.EmailAddress))
-
-	cmd.WriteString(" -UserPrincipalName ")
-	cmd.WriteString(ps.QuoteString(u.UserPrincipalName))
+	if u.UserPrincipalName == "" {
+		cmd.WriteString(ps.Param("UserPrincipalName", "$null"))
+	} else {
+		cmd.WriteString(ps.Param("UserPrincipalName", ps.QuoteString(u.UserPrincipalName)))
+	}
 
 	cmd.WriteString(" -Enabled ")
 	cmd.WriteString(ps.FormatBool(u.Enabled))
@@ -214,82 +270,148 @@ func (u *User) Push() error {
 	cmd.WriteString(" -PasswordNotRequired ")
 	cmd.WriteString(ps.FormatBool(u.PasswordNotRequired))
 
-	cmd.WriteString(" -DisplayName ")
-	cmd.WriteString(ps.QuoteString(u.DisplayName))
+	if u.DisplayName == "" {
+		cmd.WriteString(ps.Param("DisplayName", "$null"))
+	} else {
+		cmd.WriteString(ps.Param("DisplayName", ps.QuoteString(u.DisplayName)))
+	}
 
-	cmd.WriteString(" -GivenName ")
-	cmd.WriteString(ps.QuoteString(u.GivenName))
+	if u.GivenName == "" {
+		cmd.WriteString(ps.Param("GivenName", "$null"))
+	} else {
+		cmd.WriteString(ps.Param("GivenName", ps.QuoteString(u.GivenName)))
+	}
 
-	cmd.WriteString(" -Surname ")
-	cmd.WriteString(ps.QuoteString(u.Surname))
+	if u.Surname == "" {
+		cmd.WriteString(ps.Param("Surname", "$null"))
+	} else {
+		cmd.WriteString(ps.Param("Surname", ps.QuoteString(u.Surname)))
+	}
 
-	cmd.WriteString(" -OtherName ")
-	cmd.WriteString(ps.QuoteString(u.OtherName))
+	if u.OtherName == "" {
+		cmd.WriteString(ps.Param("OtherName", "$null"))
+	} else {
+		cmd.WriteString(ps.Param("OtherName", ps.QuoteString(u.OtherName)))
+	}
 
-	cmd.WriteString(" -Initials ")
-	cmd.WriteString(ps.QuoteString(u.Initials))
+	if u.Initials == "" {
+		cmd.WriteString(ps.Param("Initials", "$null"))
+	} else {
+		cmd.WriteString(ps.Param("Initials", ps.QuoteString(u.Initials)))
+	}
 
-	cmd.WriteString(" -Title ")
-	cmd.WriteString(ps.QuoteString(u.Title))
+	if u.Title == "" {
+		cmd.WriteString(ps.Param("Title", "$null"))
+	} else {
+		cmd.WriteString(ps.Param("Title", ps.QuoteString(u.Title)))
+	}
 
-	cmd.WriteString(" -Division ")
-	cmd.WriteString(ps.QuoteString(u.Division))
+	if u.Division == "" {
+		cmd.WriteString(ps.Param("Division", "$null"))
+	} else {
+		cmd.WriteString(ps.Param("Division", ps.QuoteString(u.Division)))
+	}
 
-	cmd.WriteString(" -Department ")
-	cmd.WriteString(ps.QuoteString(u.Department))
+	if u.Department == "" {
+		cmd.WriteString(ps.Param("Department", "$null"))
+	} else {
+		cmd.WriteString(ps.Param("Department", ps.QuoteString(u.Department)))
+	}
 
-	cmd.WriteString(" -Office ")
-	cmd.WriteString(ps.QuoteString(u.Office))
+	if u.Office == "" {
+		cmd.WriteString(ps.Param("Office", "$null"))
+	} else {
+		cmd.WriteString(ps.Param("Office", ps.QuoteString(u.Office)))
+	}
 
-	cmd.WriteString(" -Company ")
-	cmd.WriteString(ps.QuoteString(u.Company))
+	if u.Company == "" {
+		cmd.WriteString(ps.Param("Company", "$null"))
+	} else {
+		cmd.WriteString(ps.Param("Company", ps.QuoteString(u.Company)))
+	}
 
-	cmd.WriteString(" -Organization ")
-	cmd.WriteString(ps.QuoteString(u.Organization))
+	if u.Organization == "" {
+		cmd.WriteString(ps.Param("Organization", "$null"))
+	} else {
+		cmd.WriteString(ps.Param("Organization", ps.QuoteString(u.Organization)))
+	}
 
-	cmd.WriteString(" -HomePage ")
-	cmd.WriteString(ps.QuoteString(u.HomePage))
+	if u.HomePage == "" {
+		cmd.WriteString(ps.Param("HomePage", "$null"))
+	} else {
+		cmd.WriteString(ps.Param("HomePage", ps.QuoteString(u.HomePage)))
+	}
 
-	cmd.WriteString(" -Description ")
-	cmd.WriteString(ps.QuoteString(u.Description))
+	if u.Description == "" {
+		cmd.WriteString(ps.Param("Description", "$null"))
+	} else {
+		cmd.WriteString(ps.Param("Description", ps.QuoteString(u.Description)))
+	}
 
-	cmd.WriteString(" -OfficePhone ")
-	cmd.WriteString(ps.QuoteString(u.OfficePhone))
+	if u.OfficePhone == "" {
+		cmd.WriteString(ps.Param("OfficePhone", "$null"))
+	} else {
+		cmd.WriteString(ps.Param("OfficePhone", ps.QuoteString(u.OfficePhone)))
+	}
 
-	cmd.WriteString(" -MobilePhone ")
-	cmd.WriteString(ps.QuoteString(u.MobilePhone))
+	if u.MobilePhone == "" {
+		cmd.WriteString(ps.Param("MobilePhone", "$null"))
+	} else {
+		cmd.WriteString(ps.Param("MobilePhone", ps.QuoteString(u.MobilePhone)))
+	}
 
-	cmd.WriteString(" -Fax ")
-	cmd.WriteString(ps.QuoteString(u.Fax))
+	if u.Fax == "" {
+		cmd.WriteString(ps.Param("Fax", "$null"))
+	} else {
+		cmd.WriteString(ps.Param("Fax", ps.QuoteString(u.Fax)))
+	}
 
-	cmd.WriteString(" -POBox ")
-	cmd.WriteString(ps.QuoteString(u.POBox))
+	if u.POBox == "" {
+		cmd.WriteString(ps.Param("POBox", "$null"))
+	} else {
+		cmd.WriteString(ps.Param("POBox", ps.QuoteString(u.POBox)))
+	}
 
-	cmd.WriteString(" -StreetAddress ")
-	cmd.WriteString(ps.QuoteString(u.StreetAddress))
+	if u.StreetAddress == "" {
+		cmd.WriteString(ps.Param("StreetAddress", "$null"))
+	} else {
+		cmd.WriteString(ps.Param("StreetAddress", ps.QuoteString(u.StreetAddress)))
+	}
 
-	cmd.WriteString(" -City ")
-	cmd.WriteString(ps.QuoteString(u.City))
+	if u.City == "" {
+		cmd.WriteString(ps.Param("City", "$null"))
+	} else {
+		cmd.WriteString(ps.Param("City", ps.QuoteString(u.City)))
+	}
 
-	cmd.WriteString(" -State ")
-	cmd.WriteString(ps.QuoteString(u.State))
+	if u.State == "" {
+		cmd.WriteString(ps.Param("State", "$null"))
+	} else {
+		cmd.WriteString(ps.Param("State", ps.QuoteString(u.State)))
+	}
 
-	cmd.WriteString(" -PostalCode ")
-	cmd.WriteString(ps.QuoteString(u.PostalCode))
+	if u.PostalCode == "" {
+		cmd.WriteString(ps.Param("PostalCode", "$null"))
+	} else {
+		cmd.WriteString(ps.Param("PostalCode", ps.QuoteString(u.PostalCode)))
+	}
 
-	cmd.WriteString(" -Country ")
-	cmd.WriteString(ps.QuoteString(u.Country))
+	if u.Country == "" {
+		cmd.WriteString(ps.Param("Country", "$null"))
+	} else {
+		cmd.WriteString(ps.Param("Country", ps.QuoteString(u.Country)))
+	}
 
 	fmt.Println(cmd.String())
 
-	_, err = ps.Invoke(cmd.String())
+	_, err = powershell(cmd.String())
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
-func (u *User) SetPassword(NewPassword string) error {
+func (u *User) SetPassword() error {
 	id, err := u.Identity()
 	if err != nil {
 		return err
@@ -303,10 +425,12 @@ func (u *User) SetPassword(NewPassword string) error {
 	cmd.WriteString(" -Identity ")
 	cmd.WriteString(ps.QuoteString(id))
 	cmd.WriteString(" -NewPassword ")
-	cmd.WriteString(ps.QuoteString(NewPassword))
+	cmd.WriteString(ps.SecureString(u.AccountPassword))
 	cmd.WriteString(" -Reset -Confirm:$false")
 
-	_, err = ps.Invoke(cmd.String())
+	fmt.Println(cmd.String())
+
+	_, err = powershell(cmd.String())
 	if err != nil {
 		return err
 	}
@@ -338,7 +462,7 @@ func (u *User) SetExpiration(DateTime time.Time) error {
 	cmd.WriteString(ps.QuoteTime(DateTime))
 	cmd.WriteString(" -Confirm:$false")
 
-	_, err = ps.Invoke(cmd.String())
+	_, err = powershell(cmd.String())
 	if err != nil {
 		return err
 	}
@@ -360,7 +484,7 @@ func (u *User) ClearExpiration() error {
 	cmd.WriteString(ps.QuoteString(id))
 	cmd.WriteString(" -Confirm:$false")
 
-	_, err = ps.Invoke(cmd.String())
+	_, err = powershell(cmd.String())
 	if err != nil {
 		return err
 	}
@@ -399,7 +523,7 @@ func (u *User) joinGroups(groups []Group) error {
 	cmd.WriteString(strings.Join(Members, ","))
 	cmd.WriteString(")")
 
-	_, err = ps.Invoke(cmd.String())
+	_, err = powershell(cmd.String())
 	if err != nil {
 		return err
 	}
@@ -438,9 +562,29 @@ func (u *User) leaveGroups(groups []Group) error {
 	cmd.WriteString(strings.Join(Members, ","))
 	cmd.WriteString(")")
 
-	_, err = ps.Invoke(cmd.String())
+	_, err = powershell(cmd.String())
 	if err != nil {
 		return err
 	}
 	return nil
+}
+
+// TestSamAccountName return true if the SamAccountName exists in active directory
+func (u *User) TestSamAccountName() (bool, error) {
+	return u.TestADUser("SamAccountName", u.SamAccountName)
+}
+
+// TestUserPrincipalName return true if the UserPrincipalName exists in active directory
+func (u *User) TestUserPrincipalName() (bool, error) {
+	return u.TestADUser("UserPrincipalName", u.UserPrincipalName)
+}
+
+// TestEmailAddress return true if the EmailAddress exists in active directory
+func (u *User) TestEmailAddress() (bool, error) {
+	return u.TestADUser("EmailAddress", u.EmailAddress)
+}
+
+// TestName return true if the Name exists in active directory
+func (u *User) TestName() (bool, error) {
+	return u.TestADUser("Name", u.Name)
 }

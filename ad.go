@@ -23,3 +23,7 @@ func ParseDistinguishedName(dn string) (cn string, ou string) {
 	cn = strings.Replace(cn, "OU=", "", 1)
 	return cn, strings.Join(pieces[1:], ",")
 }
+
+func powershell(script string) ([]byte, error) {
+	return ps.Invoke("$Env:ADPS_LoadDefaultDrive = 0; Import-module ActiveDirectory; " + script)
+}
